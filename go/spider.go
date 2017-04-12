@@ -7,38 +7,29 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"strconv"
+	"path"
+	"regexp"
 
 	"github.com/lunny/html2md"
 )
 
 var cfgBlob = []byte(`{
 	"host": "xn--5rtnx620bw5s.tw",
-	"fmt_dir": "a/a%02d",
 	"fmt_url": "http://%s/%s/%s",
-	"fmt_file": "%03d",
 	"in_ext": ".htm",
-	"out_ext": ".md",
-	"arg_0": 3,
-	"arg_1a": [1,1],
-	"arg_1e": []
+	"out_ext": ".md"
 }`)
 
 var cfg config
 
 type config struct {
-	Host       string   `json:"host"`
-	FormatDir  string   `json:"fmt_dir"`
-	FormatURL  string   `json:"fmt_url"`
-	FormatFile string   `json:"fmt_file"`
-	InExt      string   `json:"in_ext"`
-	OutExt     string   `json:"out_ext"`
-	Arg0       int      `json:"arg_0"`
-	Arg1A      []int    `json:"arg_1a"`
-	Arg1E      []string `json:"arg_1e"`
-	LocalDir   string
-	URL        string
-	File       string
+	Host      string `json:"host"`
+	FormatURL string `json:"fmt_url"`
+	InExt     string `json:"in_ext"`
+	OutExt    string `json:"out_ext"`
+	LocalDir  string
+	URL       string
+	File      string
 }
 
 func init() {
@@ -47,6 +38,18 @@ func init() {
 		log.Fatal(err)
 		os.Exit(1)
 	}
+
+	html2md.AddRule("span", &html2md.Rule{
+		Patterns: []string{"span"},
+		Replacement: func(innerHTML string, attrs []string) string {
+			if len(attrs) > 1 {
+				return "`" + attrs[1] + "`"
+			}
+			return ""
+		},
+	})
+	html2md.AddConvert(link)
+	html2md.AddConvert(cleanUp)
 }
 
 func chdir() {
@@ -60,20 +63,27 @@ func chdir() {
 		os.Exit(1)
 	}
 }
+func link(ct string) string {
+	re := regexp.MustCompile(`(\([^\)]*)\.htm[l]?\)`)
+	ct = re.ReplaceAllString(ct, "${1}.md)")
+	return ct
+}
+
+func cleanUp(ct string) string {
+	ct = regexp.MustCompile(".*漢川草廬.*\n").ReplaceAllString(ct, "")
+	ct = regexp.MustCompile(`.*\[Menu\]\(#nav\).*\n`).ReplaceAllString(ct, "")
+
+	// trim leading/trailing whitespace
+	ct = regexp.MustCompile("^[\t\r\n]+|[\t\r\n]+$").ReplaceAllString(ct, "")
+
+	ct = regexp.MustCompile(`\n\{3,}`).ReplaceAllString(ct, "\n\n")
+	return ct
+}
 
 func conv() {
 	inFile := cfg.File + cfg.InExt
 	outFile := cfg.File + cfg.OutExt
 	html, _ := ioutil.ReadFile(inFile)
-	html2md.AddRule("span", &html2md.Rule{
-		Patterns: []string{"span"},
-		Replacement: func(innerHTML string, attrs []string) string {
-			if len(attrs) > 1 {
-				return "`" + attrs[1] + "`"
-			}
-			return ""
-		},
-	})
 	md := html2md.Convert(string(html))
 	ioutil.WriteFile(outFile, []byte(md), 0644)
 }
@@ -89,23 +99,28 @@ func download() {
 	conv()
 }
 
+func toc() {
+	download()
+
+	outFile := cfg.File + cfg.OutExt
+	md, _ := ioutil.ReadFile(outFile)
+	files := regexp.MustCompile(`\(([\w]+)\.md\)`).FindAllStringSubmatch(string(md), -1)
+	for _, v := range files {
+		cfg.File = v[1]
+		cfg.URL = fmt.Sprintf(cfg.FormatURL, cfg.Host, cfg.LocalDir, cfg.File+cfg.InExt)
+		download()
+	}
+}
+
 func main() {
-	if len(os.Args) > 1 {
-		cfg.Arg0, _ = strconv.Atoi(os.Args[1])
+	if len(os.Args) != 3 {
+		log.Fatal("spider cate name")
 	}
-	fmt.Printf("%+v\n", cfg)
-	cfg.LocalDir = fmt.Sprintf(cfg.FormatDir, cfg.Arg0)
+	cate := os.Args[1]
+	name := os.Args[2]
+	cfg.File = name
+	cfg.LocalDir = path.Join(cate, name)
+	cfg.URL = fmt.Sprintf(cfg.FormatURL, cfg.Host, cfg.LocalDir, cfg.File+cfg.InExt)
 	chdir()
-	for i := cfg.Arg1A[0]; i <= cfg.Arg1A[1]; i++ {
-		cfg.File = fmt.Sprintf(cfg.FormatFile, i)
-		cfg.URL = fmt.Sprintf(cfg.FormatURL, cfg.Host, cfg.LocalDir, cfg.File+cfg.InExt)
-		download()
-	}
-	e := fmt.Sprintf("a%02d", cfg.Arg0)
-	cfg.Arg1E = append(cfg.Arg1E, e)
-	for _, e := range cfg.Arg1E {
-		cfg.File = e
-		cfg.URL = fmt.Sprintf(cfg.FormatURL, cfg.Host, cfg.LocalDir, cfg.File+cfg.InExt)
-		download()
-	}
+	toc()
 }
