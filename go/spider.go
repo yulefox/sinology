@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
 	"regexp"
 
 	"github.com/lunny/html2md"
@@ -30,6 +29,8 @@ type config struct {
 	LocalDir  string
 	URL       string
 	File      string
+	Files     [][]string
+	Root      bool
 }
 
 func init() {
@@ -71,12 +72,30 @@ func link(ct string) string {
 
 func cleanUp(ct string) string {
 	ct = regexp.MustCompile(".*漢川草廬.*\n").ReplaceAllString(ct, "")
+	ct = regexp.MustCompile(".*#### 二十四史.*\n").ReplaceAllString(ct, "")
 	ct = regexp.MustCompile(`.*\[Menu\]\(#nav\).*\n`).ReplaceAllString(ct, "")
+	ct = regexp.MustCompile(`\n.*\(\D+.*\.md\).*`).ReplaceAllString(ct, "")
+
+	if cfg.Root {
+		md := ct
+		// trim leading/trailing whitespace
+		md = regexp.MustCompile(`(\[.*\]\(\d+.*\.md\))`).ReplaceAllString(md, "\n* ${1}\n")
+		md = regexp.MustCompile(`\n[\* ]+\n`).ReplaceAllString(md, "\n")
+		md = regexp.MustCompile(`\n[^#\*].*\n`).ReplaceAllString(md, "\n")
+		md = regexp.MustCompile(`\n[\t ]+|[\t ]+\n|\n[\t 　]+\n`).ReplaceAllString(md, "\n")
+		md = regexp.MustCompile(`\n{3,}`).ReplaceAllString(md, "\n\n")
+		ioutil.WriteFile("SUMMARY.md", []byte(md), 0644)
+	}
 
 	// trim leading/trailing whitespace
-	ct = regexp.MustCompile("^[\t\r\n]+|[\t\r\n]+$").ReplaceAllString(ct, "")
+	ct = regexp.MustCompile(`\n.*\(.*\.md\).*`).ReplaceAllString(ct, "")
+	ct = regexp.MustCompile(`\n[\t ]+|[\t ]+\n|\n[\t 　]+\n`).ReplaceAllString(ct, "\n")
+	ct = regexp.MustCompile(`\n{3,}`).ReplaceAllString(ct, "\n\n")
+	if cfg.Root {
+		ct = regexp.MustCompile(`\n[\* ]+\n+\* ]+\n`).ReplaceAllString(ct, "\n")
+		ioutil.WriteFile("README.md", []byte(ct), 0644)
+	}
 
-	ct = regexp.MustCompile(`\n\{3,}`).ReplaceAllString(ct, "\n\n")
 	return ct
 }
 
@@ -84,6 +103,10 @@ func conv() {
 	inFile := cfg.File + cfg.InExt
 	outFile := cfg.File + cfg.OutExt
 	html, _ := ioutil.ReadFile(inFile)
+	if cfg.Root {
+		exp := `href="([\w]+)\` + cfg.InExt + `"`
+		cfg.Files = regexp.MustCompile(exp).FindAllStringSubmatch(string(html), -1)
+	}
 	md := html2md.Convert(string(html))
 	ioutil.WriteFile(outFile, []byte(md), 0644)
 }
@@ -102,24 +125,25 @@ func download() {
 func toc() {
 	download()
 
-	outFile := cfg.File + cfg.OutExt
-	md, _ := ioutil.ReadFile(outFile)
-	files := regexp.MustCompile(`\(([\w]+)\.md\)`).FindAllStringSubmatch(string(md), -1)
-	for _, v := range files {
+	for _, v := range cfg.Files {
 		cfg.File = v[1]
+		cfg.Root = false
 		cfg.URL = fmt.Sprintf(cfg.FormatURL, cfg.Host, cfg.LocalDir, cfg.File+cfg.InExt)
 		download()
 	}
 }
 
 func main() {
-	if len(os.Args) != 3 {
-		log.Fatal("spider cate name")
+	n := len(os.Args)
+	if n < 3 {
+		log.Fatal("spider cate name [ext]")
 	}
-	cate := os.Args[1]
-	name := os.Args[2]
-	cfg.File = name
-	cfg.LocalDir = path.Join(cate, name)
+	if n > 3 {
+		cfg.InExt = "." + os.Args[3]
+	}
+	cfg.LocalDir = os.Args[1]
+	cfg.File = os.Args[2]
+	cfg.Root = true
 	cfg.URL = fmt.Sprintf(cfg.FormatURL, cfg.Host, cfg.LocalDir, cfg.File+cfg.InExt)
 	chdir()
 	toc()
